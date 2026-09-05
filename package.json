@@ -1,6 +1,6 @@
 {
   "name": "@pify/plan-mode",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Read-only planning mode for pi with an explicit approve-then-execute gate: enforced tool policy, plan files, approach options, fresh-session handoff",
   "keywords": [
     "pi-package",
@@ -31,8 +31,12 @@
     "LICENSE"
   ],
   "pi": {
-    "extensions": ["./extensions/plan-mode.ts"],
-    "skills": ["./skills"]
+    "extensions": [
+      "./extensions/plan-mode.ts"
+    ],
+    "skills": [
+      "./skills"
+    ]
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
@@ -44,8 +48,12 @@
     "typebox": "*"
   },
   "peerDependenciesMeta": {
-    "@earendil-works/pi-coding-agent": { "optional": true },
-    "typebox": { "optional": true }
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    },
+    "typebox": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "^0.84.4",
