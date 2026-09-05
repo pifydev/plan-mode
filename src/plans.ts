@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, writeFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 /** Plan files live in .pi/plans/, reviewable and committable. */
@@ -23,6 +23,22 @@ function pad2(n: number): string {
 
 export function localDateStr(d: Date = new Date()): string {
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+
+/** List saved plan files, newest first (v0.2: saved-plan library, minimal form). */
+export function listPlanFiles(cwd: string): Array<{ file: string; size: number }> {
+  const dir = plansDir(cwd);
+  try {
+    return readdirSync(dir)
+      .filter((f) => f.endsWith(".md"))
+      .map((f) => {
+        const full = join(dir, f);
+        return { file: f, size: statSync(full).size };
+      })
+      .sort((a, b) => b.file.localeCompare(a.file));
+  } catch {
+    return [];
+  }
 }
 
 /** Create the plan file, uniquified when the slug collides on the same day. */

@@ -92,3 +92,19 @@ test("replayBranch: last snapshot wins, junk skipped", () => {
   ]);
   assert.equal(off.active, false);
 });
+
+test("v0.2 listPlanFiles lists newest-first, empty when absent", () => {
+  const base = mkdtempSync(join(tmpdir(), "pify-planlist-"));
+  try {
+    const { listPlanFiles, createPlanFile } = require("../src/plans.ts") as typeof import("../src/plans.ts");
+    assert.deepEqual(listPlanFiles(base), []);
+    createPlanFile(base, "Alpha", "# a");
+    createPlanFile(base, "Beta", "# longer content here");
+    const plans = listPlanFiles(base);
+    assert.equal(plans.length, 2);
+    assert.ok(plans.every((p) => p.file.endsWith(".md")));
+    assert.ok(plans.every((p) => p.size > 0));
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});

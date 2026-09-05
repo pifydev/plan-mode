@@ -26,7 +26,7 @@ import type {
 import { Type } from "typebox";
 
 import { classifyToolCall } from "../src/policy.ts";
-import { createPlanFile } from "../src/plans.ts";
+import { createPlanFile, listPlanFiles } from "../src/plans.ts";
 import {
   ENTER_REMINDER,
   EXIT_REMINDER,
@@ -347,9 +347,20 @@ export default function planMode(pi: ExtensionAPI) {
   // ── Command & shortcut ───────────────────────────────────────────────
 
   pi.registerCommand("plan", {
-    description: "Toggle read-only plan mode: /plan [off | <first planning prompt>]",
+    description: "Toggle read-only plan mode: /plan [off | list | <first planning prompt>]",
     handler: async (args, ctx) => {
       const text = (args ?? "").trim();
+      if (text.toLowerCase() === "list") {
+        const plans = listPlanFiles(ctx.cwd);
+        notify(
+          ctx,
+          plans.length > 0
+            ? `${plans.map((p) => `${p.file} (${p.size} chars)`).join("\n")}\nLocation: .pi/plans/`
+            : "No saved plans yet (.pi/plans/ is empty).",
+          "info",
+        );
+        return;
+      }
       if (text.toLowerCase() === "off") {
         if (!state.active) {
           notify(ctx, "Plan mode is not active.", "info");
