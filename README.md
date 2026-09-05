@@ -24,6 +24,9 @@ Part of the [Pify suite](https://github.com/pifydev). Install with [`pify instal
 /plan                      # toggle plan mode
 /plan add oauth login      # enter + start planning this
 /plan off                  # leave without approval
+/plan list                 # saved plans in .pi/plans/ (v0.2)
+/plan steps                # progress through the approved plan (v0.3)
+/plan export [file]        # standalone HTML next to the plan (v0.3)
 pi --plan                  # start a session already in plan mode
 ```
 
@@ -35,6 +38,16 @@ pi --plan                  # start a session already in plan mode
 pi remove npm:@narumitw/pi-plan-mode
 pify install plan-mode
 ```
+
+## After approval (v0.3)
+
+An approved plan becomes a tracked step list rather than a document the agent re-reads each turn — which is how plans get quietly abandoned halfway. Steps are parsed from the markdown the agent already wrote (numbered list, or the bullets under a *Steps*-ish heading), so there is no second source of truth.
+
+- `plan_step_done(index, evidence)` — the agent ticks off one step at a time, with evidence, and gets the next one back. Completing out of order is allowed but reported: the answer names the steps still open before it.
+- The status badge follows execution — `📋 2/7 steps` — instead of disappearing at approval.
+- `/plan steps` shows the list; progress survives `/reload` and branch switches with the rest of the plan state.
+
+`/plan export` writes a self-contained HTML file next to the plan: no assets, no network, everything escaped before rendering — a plan containing HTML is shown as text, not executed.
 
 ## License
 

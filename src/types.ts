@@ -3,6 +3,8 @@
  * No imports from pi packages: src/ typechecks and runs standalone.
  */
 
+import type { PlanStep } from "./steps.ts";
+
 export interface PlanState {
   active: boolean;
   /** Absolute path of the current plan file; edit/write to it is allowed. */
@@ -10,12 +12,15 @@ export interface PlanState {
   /** Thinking level to restore when leaving plan mode. */
   buildThinking: string | null;
   enteredAt: number | null;
+  /** Steps of the approved plan, tracked through execution (v0.3). */
+  steps: PlanStep[];
 }
 
 export const INITIAL_STATE: PlanState = {
   active: false,
   planFile: null,
   buildThinking: null,
+  steps: [],
   enteredAt: null,
 };
 

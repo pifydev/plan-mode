@@ -26,7 +26,20 @@ import type {
 import { Type } from "typebox";
 
 import { classifyToolCall } from "../src/policy.ts";
-import { createPlanFile, listPlanFiles } from "../src/plans.ts";
+import { readFileSync, writeFileSync } from "node:fs";
+import { basename, isAbsolute, join } from "node:path";
+
+import { htmlPathFor, renderPlanHtml } from "../src/export.ts";
+import { createPlanFile, listPlanFiles, plansDir } from "../src/plans.ts";
+import {
+  completeStep,
+  formatSteps,
+  nextStep,
+  parseSteps,
+  progressLine,
+  skippedBefore,
+  type PlanStep,
+} from "../src/steps.ts";
 import {
   ENTER_REMINDER,
   EXIT_REMINDER,
@@ -37,6 +50,16 @@ import { PLAN_STATE, replayBranch } from "../src/state.ts";
 import { INITIAL_STATE, PLAN_THINKING, type PlanState } from "../src/types.ts";
 
 const REMINDER_TYPE = "plan-mode-reminder";
+
+/** Read a file, or "" when it is missing/unreadable. */
+function readFileSafe(file: string | null): string {
+  if (!file) return "";
+  try {
+    return readFileSync(file, "utf8");
+  } catch {
+    return "";
+  }
+}
 
 type UiContext = ExtensionContext;
 
@@ -54,7 +77,14 @@ export default function planMode(pi: ExtensionAPI) {
 
   function updateBadge(ctx: UiContext): void {
     if (!ctx.hasUI) return;
-    ctx.ui.setStatus("plan", state.active ? "📋 plan" : undefined);
+    if (state.active) {
+      ctx.ui.setStatus("plan", "📋 plan");
+      return;
+    }
+    // After approval the badge follows execution instead of disappearing —
+    // that is exactly when a plan gets quietly abandoned halfway.
+    const open = state.steps.filter((s) => !s.done).length;
+    ctx.ui.setStatus("plan", open > 0 ? `📋 ${progressLine(state.steps)}` : undefined);
   }
 
   function notify(ctx: UiContext, message: string, level: "info" | "warning" | "error"): void {
@@ -75,6 +105,7 @@ export default function planMode(pi: ExtensionAPI) {
       planFile: null,
       buildThinking,
       enteredAt: Date.now(),
+      steps: [],
     });
     try {
       // Planning earns deeper thought (bacnh85); restored on exit.
@@ -87,10 +118,15 @@ export default function planMode(pi: ExtensionAPI) {
     return true;
   }
 
-  function leavePlanMode(ctx: UiContext): void {
+  /**
+   * Leave plan mode. `keepSteps` carries the approved plan's step list into
+   * execution — the tracker only exists after an approval, never after a
+   * discard.
+   */
+  function leavePlanMode(ctx: UiContext, keepSteps: PlanStep[] = []): void {
     if (!state.active) return;
     const restore = state.buildThinking;
-    commit(ctx, { ...INITIAL_STATE });
+    commit(ctx, { ...INITIAL_STATE, steps: keepSteps });
     approvedTools.clear();
     if (restore) {
       try {
@@ -210,6 +246,42 @@ export default function planMode(pi: ExtensionAPI) {
     },
   });
 
+  pi.registerTool({
+    name: "plan_step_done",
+    label: "Plan step done",
+    description:
+      "Mark one step of the approved plan complete and get the next one. Call it as you finish each " +
+      "step, with evidence of what you verified — not at the end for all steps at once. Only available " +
+      "after a plan was approved.",
+    parameters: Type.Object({
+      index: Type.Number({ description: "1-based step number from the plan" }),
+      evidence: Type.String({ description: "What you verified for this step (command output, file state)" }),
+    }),
+    async execute(_id, params: { index: number; evidence: string }, _signal, _onUpdate, ctx) {
+      if (state.steps.length === 0) {
+        throw new Error("No approved plan is being tracked. plan_step_done only works after exit_plan_mode approval.");
+      }
+      if (!params.evidence.trim()) {
+        throw new Error("plan_step_done requires evidence: what you verified for this step.");
+      }
+      const result = completeStep(state.steps, params.index);
+      if (result.error) throw new Error(result.error);
+
+      const skipped = skippedBefore(state.steps, params.index);
+      commit(ctx as UiContext, { ...state, steps: result.steps });
+
+      const next = nextStep(result.steps);
+      const lines = [
+        `Step #${params.index} done (${progressLine(result.steps)}).`,
+        skipped.length > 0
+          ? `Still open before it: ${skipped.map((s) => `#${s.index}`).join(", ")} — go back unless they no longer apply.`
+          : "",
+        next ? `Next: #${next.index} ${next.text}` : "All steps complete. Report the result to the user.",
+      ].filter(Boolean);
+      return { content: [{ type: "text", text: lines.join("\n") }], details: { steps: result.steps } };
+    },
+  });
+
   const APPROVE_HERE = "Approve — implement here";
   const APPROVE_FRESH = "Approve — implement in a fresh session";
   const REVISE = "Revise the plan";
@@ -309,7 +381,13 @@ export default function planMode(pi: ExtensionAPI) {
       }
 
       const planFile = state.planFile;
-      leavePlanMode(uiCtx);
+      // v0.3: the approved plan becomes a tracked step list, so execution has
+      // a cursor instead of the agent re-reading the markdown each turn.
+      const steps = planFile ? parseSteps(readFileSafe(planFile)) : [];
+      leavePlanMode(uiCtx, steps);
+      if (steps.length > 0) {
+        notify(uiCtx, `Tracking ${steps.length} steps — /plan steps to view.`, "info");
+      }
 
       if (decision === APPROVE_FRESH) {
         try {
@@ -347,9 +425,48 @@ export default function planMode(pi: ExtensionAPI) {
   // ── Command & shortcut ───────────────────────────────────────────────
 
   pi.registerCommand("plan", {
-    description: "Toggle read-only plan mode: /plan [off | list | <first planning prompt>]",
+    description: "Plan mode: /plan [off | list | steps | export [file] | <first planning prompt>]",
     handler: async (args, ctx) => {
       const text = (args ?? "").trim();
+      if (text.toLowerCase() === "steps") {
+        notify(
+          ctx,
+          state.steps.length === 0
+            ? "No plan is being tracked. Steps appear after a plan is approved with exit_plan_mode."
+            : formatSteps(state.steps),
+          "info",
+        );
+        return;
+      }
+      if (text.toLowerCase() === "export" || text.toLowerCase().startsWith("export ")) {
+        const target = text.slice("export".length).trim() || state.planFile;
+        if (!target) {
+          notify(ctx, "Nothing to export — no current plan. Usage: /plan export [file.md]", "warning");
+          return;
+        }
+        const file = isAbsolute(target) ? target : join(plansDir(ctx.cwd), target);
+        const markdown = readFileSafe(file);
+        if (!markdown) {
+          notify(ctx, `Could not read ${file}.`, "error");
+          return;
+        }
+        const out = htmlPathFor(file);
+        try {
+          writeFileSync(
+            out,
+            renderPlanHtml(markdown, {
+              title: basename(file, ".md").replace(/^\d{4}-\d{2}-\d{2}-/, "").replace(/-/g, " "),
+              generatedAt: new Date().toISOString().replace("T", " ").slice(0, 16),
+              sourceFile: basename(file),
+              progress: state.steps.length > 0 ? progressLine(state.steps) : undefined,
+            }),
+          );
+          notify(ctx, `Exported ${out}`, "info");
+        } catch (err) {
+          notify(ctx, `Export failed: ${err instanceof Error ? err.message : String(err)}`, "error");
+        }
+        return;
+      }
       if (text.toLowerCase() === "list") {
         const plans = listPlanFiles(ctx.cwd);
         notify(
