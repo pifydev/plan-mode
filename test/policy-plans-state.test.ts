@@ -5,7 +5,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { classifyToolCall } from "../src/policy.ts";
-import { createPlanFile, slugify } from "../src/plans.ts";
+import { createPlanFile, listPlanFiles, slugify } from "../src/plans.ts";
 import { PLAN_STATE, replayBranch } from "../src/state.ts";
 import { INITIAL_STATE } from "../src/types.ts";
 
@@ -96,7 +96,6 @@ test("replayBranch: last snapshot wins, junk skipped", () => {
 test("v0.2 listPlanFiles lists newest-first, empty when absent", () => {
   const base = mkdtempSync(join(tmpdir(), "pify-planlist-"));
   try {
-    const { listPlanFiles, createPlanFile } = require("../src/plans.ts") as typeof import("../src/plans.ts");
     assert.deepEqual(listPlanFiles(base), []);
     createPlanFile(base, "Alpha", "# a");
     createPlanFile(base, "Beta", "# longer content here");
