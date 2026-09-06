@@ -25,11 +25,13 @@ Part of the [Pify suite](https://github.com/pifydev). Install with [`pify instal
 /plan add oauth login      # enter + start planning this
 /plan off                  # leave without approval
 /plan list                 # saved plans in .pi/plans/ (v0.2)
-- **Reopen a saved plan** (v0.4): `/plan open <file>` takes a filename, a stem, or any distinctive fragment (`/plan open oauth`), hands the plan text back to the agent as a hidden message, and restarts step tracking from what the file says **now** — the file is the source of truth, not the step list it produced last time.
+/plan open oauth           # reopen a saved plan by name or fragment (v0.4)
 /plan steps                # progress through the approved plan (v0.3)
 /plan export [file]        # standalone HTML next to the plan (v0.3)
 pi --plan                  # start a session already in plan mode
 ```
+
+**Reopening** (v0.4): `/plan open <file>` accepts a filename, a stem, or any distinctive fragment. It hands the plan text back to the agent as a hidden message and restarts step tracking by re-parsing the file — the file is the source of truth, not the step list it produced last time.
 
 ## Conflicts
 
