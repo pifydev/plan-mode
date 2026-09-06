@@ -30,7 +30,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { basename, isAbsolute, join } from "node:path";
 
 import { htmlPathFor, renderPlanHtml } from "../src/export.ts";
-import { createPlanFile, listPlanFiles, plansDir } from "../src/plans.ts";
+import { createPlanFile, listPlanFiles, plansDir, resolvePlanFile } from "../src/plans.ts";
 import {
   completeStep,
   formatSteps,
@@ -44,6 +44,7 @@ import {
   ENTER_REMINDER,
   EXIT_REMINDER,
   buildHandoffMessage,
+  buildReopenMessage,
   buildImplementHereMessage,
 } from "../src/prompts.ts";
 import { PLAN_STATE, replayBranch } from "../src/state.ts";
@@ -425,7 +426,7 @@ export default function planMode(pi: ExtensionAPI) {
   // ── Command & shortcut ───────────────────────────────────────────────
 
   pi.registerCommand("plan", {
-    description: "Plan mode: /plan [off | list | steps | export [file] | <first planning prompt>]",
+    description: "Plan mode: /plan [off | list | open <file> | steps | export [file] | <first planning prompt>]",
     handler: async (args, ctx) => {
       const text = (args ?? "").trim();
       if (text.toLowerCase() === "steps") {
@@ -474,6 +475,37 @@ export default function planMode(pi: ExtensionAPI) {
           plans.length > 0
             ? `${plans.map((p) => `${p.file} (${p.size} chars)`).join("\n")}\nLocation: .pi/plans/`
             : "No saved plans yet (.pi/plans/ is empty).",
+          "info",
+        );
+        return;
+      }
+      // v0.4: reopen a saved plan — the other half of the plan library. The
+      // file is the source of truth, so tracking restarts from what it says
+      // now, not from the step list it produced when it was written.
+      if (text.toLowerCase().startsWith("open")) {
+        const wanted = text.slice("open".length).trim();
+        if (!wanted) {
+          notify(ctx, "Usage: /plan open <file>  (see /plan list)", "warning");
+          return;
+        }
+        const file = resolvePlanFile(ctx.cwd, wanted);
+        if (!file) {
+          notify(ctx, `No saved plan matches "${wanted}". /plan list shows what is there.`, "warning");
+          return;
+        }
+        const markdown = readFileSafe(file);
+        if (!markdown) {
+          notify(ctx, `Could not read ${file}.`, "error");
+          return;
+        }
+        const steps = parseSteps(markdown);
+        commit(ctx, { ...state, planFile: file, steps });
+        sendReminder(buildReopenMessage(file, markdown));
+        notify(
+          ctx,
+          steps.length > 0
+            ? `Reopened ${basename(file)} — tracking ${steps.length} steps. /plan steps to view.`
+            : `Reopened ${basename(file)}. No checklist steps were found in it.`,
           "info",
         );
         return;

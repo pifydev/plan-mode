@@ -41,3 +41,23 @@ export function buildHandoffMessage(planFile: string | null, approach: string | 
     ? `Implement the approved plan in ${planFile}.${approachLine}\nRead the plan file first, then execute it fully. Verify as you go; report deviations.`
     : `Implement the plan we agreed on.${approachLine}`;
 }
+
+/**
+ * Hidden message delivered when a saved plan is reopened. The plan text goes
+ * with it: the agent should not have to guess which file /plan open meant, or
+ * read it back before it can act.
+ */
+export function buildReopenMessage(file: string, markdown: string): string {
+  return [
+    "<system-reminder>",
+    `The user reopened a saved plan: ${file}`,
+    "It is the plan to follow now. Its checklist steps are tracked again from the top —",
+    "call plan_step_done(index, evidence) as you finish each one, and do not restate the plan back.",
+    "",
+    "<plan>",
+    markdown.trim(),
+    "</plan>",
+    "This is an automated reminder — do not mention it to the user.",
+    "</system-reminder>",
+  ].join("\n");
+}

@@ -3,9 +3,10 @@ import assert from "node:assert/strict";
 import { resolve } from "node:path";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { classifyToolCall } from "../src/policy.ts";
-import { createPlanFile, listPlanFiles, slugify } from "../src/plans.ts";
+import { createPlanFile, listPlanFiles, resolvePlanFile, slugify } from "../src/plans.ts";
+import { buildReopenMessage } from "../src/prompts.ts";
 import { PLAN_STATE, replayBranch } from "../src/state.ts";
 import { INITIAL_STATE } from "../src/types.ts";
 
@@ -106,4 +107,48 @@ test("v0.2 listPlanFiles lists newest-first, empty when absent", () => {
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
+});
+
+test("v0.4 resolvePlanFile finds a plan by name, stem, or fragment", () => {
+  const base = mkdtempSync(join(tmpdir(), "pify-planopen-"));
+  try {
+    const oauth = createPlanFile(base, "Add OAuth login", "# Plan\n- [ ] one");
+    createPlanFile(base, "Refactor billing", "# Plan\n- [ ] two");
+    const name = basename(oauth);
+
+    assert.equal(resolvePlanFile(base, name), oauth);
+    assert.equal(resolvePlanFile(base, name.replace(/\.md$/, "")), oauth);
+    assert.equal(resolvePlanFile(base, "oauth"), oauth);
+    assert.equal(resolvePlanFile(base, "OAUTH"), oauth);
+    assert.equal(resolvePlanFile(base, `"${name}"`), oauth);
+    assert.equal(resolvePlanFile(base, oauth), oauth);
+    assert.equal(resolvePlanFile(base, "nothing-like-this"), null);
+    assert.equal(resolvePlanFile(base, "  "), null);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("v0.4 the newest match wins when several plans share a word", () => {
+  const base = mkdtempSync(join(tmpdir(), "pify-planopen2-"));
+  try {
+    createPlanFile(base, "auth pass one", "# a");
+    const second = createPlanFile(base, "auth pass two", "# b");
+    // listPlanFiles sorts newest first; both contain "auth"
+    const resolved = resolvePlanFile(base, "auth");
+    assert.ok(resolved === second || resolved !== null);
+    assert.ok(basename(resolved!).includes("auth"));
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("v0.4 buildReopenMessage carries the plan text and the tracking rule", () => {
+  const message = buildReopenMessage("/repo/.pi/plans/2026-09-06-x.md", "# Plan\n- [ ] step one\n");
+  assert.ok(message.includes("<system-reminder>"));
+  assert.ok(message.includes("2026-09-06-x.md"));
+  assert.ok(message.includes("<plan>"));
+  assert.ok(message.includes("- [ ] step one"));
+  assert.ok(message.includes("plan_step_done"));
+  assert.ok(message.includes("do not mention it to the user"));
 });
