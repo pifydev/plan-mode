@@ -30,6 +30,9 @@ Do not enter plan mode for trivial single-file edits.
    1-3 alternative approaches, marking one "(Recommended)". The user approves
    (here or in a fresh session), requests revisions, or discards.
 6. After approval, implement the plan exactly; report any deviation.
+   An approved plan is frozen: do not quietly rewrite the plan file so it
+   matches what you ended up doing. Track progress with `plan_step_done`,
+   and if the plan turns out to be wrong, say so and re-plan in the open.
 
 ## While plan mode is active
 
