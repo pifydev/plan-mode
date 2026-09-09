@@ -1,6 +1,6 @@
 ---
 name: plan-mode
-description: Use when a task is complex, risky, spans many files, or the user asks for a plan first - explains the plan-mode workflow (enter_plan_mode, write_plan, exit_plan_mode approval gate) and the read-only discipline
+description: Use when a task is complex, risky, spans many files, or the user asks for a plan first
 ---
 
 # Plan mode
