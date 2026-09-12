@@ -25,6 +25,16 @@ export function localDateStr(d: Date = new Date()): string {
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 }
 
+/**
+ * Local wall-clock stamp for the export footer. This package already keys
+ * plan FILES by the local day; the exported HTML stamped toISOString() — UTC
+ * dressed as local, no timezone marker — so an early-morning export in a
+ * UTC+ zone carried yesterday's date while the filename carried today's.
+ */
+export function localStamp(d: Date = new Date()): string {
+  return `${localDateStr(d)} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
 /** List saved plan files, newest first (v0.2: saved-plan library, minimal form). */
 export function listPlanFiles(cwd: string): Array<{ file: string; size: number }> {
   const dir = plansDir(cwd);

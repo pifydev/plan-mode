@@ -30,7 +30,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { basename, isAbsolute, join } from "node:path";
 
 import { htmlPathFor, renderPlanHtml } from "../src/export.ts";
-import { createPlanFile, listPlanFiles, plansDir, resolvePlanFile } from "../src/plans.ts";
+import { createPlanFile, listPlanFiles, plansDir, resolvePlanFile, localStamp } from "../src/plans.ts";
 import {
   completeStep,
   formatSteps,
@@ -461,7 +461,7 @@ export default function planMode(pi: ExtensionAPI) {
             out,
             renderPlanHtml(markdown, {
               title: basename(file, ".md").replace(/^\d{4}-\d{2}-\d{2}-/, "").replace(/-/g, " "),
-              generatedAt: new Date().toISOString().replace("T", " ").slice(0, 16),
+              generatedAt: localStamp(),
               sourceFile: basename(file),
               progress: state.steps.length > 0 ? progressLine(state.steps) : undefined,
             }),

@@ -1,6 +1,6 @@
 {
   "name": "@pify/plan-mode",
-  "version": "0.4.4",
+  "version": "0.4.5",
   "description": "Read-only planning mode for pi with an explicit approve-then-execute gate: enforced tool policy, plan files, approach options, fresh-session handoff",
   "keywords": [
     "pi-package",
