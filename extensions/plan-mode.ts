@@ -26,6 +26,7 @@ import type {
 import { Type } from "typebox";
 
 import { classifyToolCall } from "../src/policy.ts";
+import { withUiLock } from "../src/ui-lock.ts";
 import { readFileSync, writeFileSync } from "node:fs";
 import { basename, isAbsolute, join } from "node:path";
 
@@ -158,10 +159,10 @@ export default function planMode(pi: ExtensionAPI) {
       if (!ctx.hasUI) {
         return { block: true, reason: `Plan mode: ${verdict.reason} (no UI to confirm — blocked).` };
       }
-      const ok = await ctx.ui.confirm(
+      const ok = await withUiLock(() => ctx.ui.confirm(
         "Plan mode",
         `Allow this while planning?\n${verdict.reason}`,
-      );
+      ));
       if (ok) {
         // Bash confirmations are per-command; custom tools are remembered.
         if (event.toolName !== "bash") approvedTools.add(event.toolName);
@@ -339,12 +340,12 @@ export default function planMode(pi: ExtensionAPI) {
       const approaches = (params.options ?? []).filter((o) => o.label.trim());
       if (approaches.length > 0) {
         const lines = approaches.map((o) => `${o.label}: ${o.description}`).join("\n");
-        const picked = await uiCtx.ui.select(
+        const picked = await withUiLock(() => uiCtx.ui.select(
           `Plan approaches\n${params.summary}\n\n${lines}`,
           [...approaches.map((o) => o.label), REVISE, DISCARD],
-        );
+        ));
         if (picked === undefined || picked === REVISE) {
-          const feedback = picked === REVISE ? await uiCtx.ui.input("What should change?") : undefined;
+          const feedback = picked === REVISE ? await withUiLock(() => uiCtx.ui.input("What should change?")) : undefined;
           return {
             content: [
               { type: "text", text: `The user wants revisions.${feedback ? ` Feedback: ${feedback}` : ""} Stay in plan mode and refine the plan.` },
@@ -363,13 +364,13 @@ export default function planMode(pi: ExtensionAPI) {
       }
 
       // Step 2: approve where?
-      const decision = await uiCtx.ui.select(
+      const decision = await withUiLock(() => uiCtx.ui.select(
         `Approve this plan?\n${params.summary}${state.planFile ? `\n\nPlan file: ${state.planFile}` : ""}`,
         approaches.length > 0 ? [APPROVE_HERE, APPROVE_FRESH] : [APPROVE_HERE, APPROVE_FRESH, REVISE, DISCARD],
-      );
+      ));
 
       if (decision === undefined || decision === REVISE) {
-        const feedback = decision === REVISE ? await uiCtx.ui.input("What should change?") : undefined;
+        const feedback = decision === REVISE ? await withUiLock(() => uiCtx.ui.input("What should change?")) : undefined;
         return {
           content: [
             { type: "text", text: `The user wants revisions.${feedback ? ` Feedback: ${feedback}` : ""} Stay in plan mode and refine the plan.` },
