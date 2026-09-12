@@ -65,7 +65,13 @@ function readFileSafe(file: string | null): string {
 
 type UiContext = ExtensionContext;
 
+const FRESH_COMMAND = "/plan-approve-fresh";
+
 export default function planMode(pi: ExtensionAPI) {
+  // Set by exit_plan_mode's APPROVE_FRESH path, consumed once by the fresh
+  // command handler — the handoff text bridged from tool ctx (no newSession)
+  // to command ctx (has newSession).
+  let pendingFreshHandoff: string | null = null;
   let state: PlanState = INITIAL_STATE;
   const approvedTools = new Set<string>();
 
@@ -396,28 +402,20 @@ export default function planMode(pi: ExtensionAPI) {
       }
 
       if (decision === APPROVE_FRESH) {
-        try {
-          const handoff = buildHandoffMessage(planFile, approach);
-          // newSession lives on the command context; tool ctx may carry it
-          // too at runtime — probe structurally and fall back if absent.
-          const sessionHost = uiCtx as unknown as {
-            newSession?: (options: {
-              withSession: (ctx: { sendUserMessage: (m: string) => void | Promise<void> }) => Promise<void>;
-            }) => Promise<{ cancelled: boolean }>;
-          };
-          if (!sessionHost.newSession) throw new Error("newSession unavailable in this context");
-          await sessionHost.newSession({
-            withSession: async (replacementCtx) => {
-              await replacementCtx.sendUserMessage(handoff);
-            },
-          });
-          return {
-            content: [{ type: "text", text: "Approved. A fresh session was started with the plan handoff." }],
-            details: { planFile, approach },
-          };
-        } catch (err) {
-          notify(uiCtx, `Fresh session failed (${err instanceof Error ? err.message : String(err)}) — implementing here.`, "warning");
-        }
+        // newSession lives only on the COMMAND context, never on a tool ctx
+        // (measured: tool ctx is a plain ExtensionContext; newSession is on
+        // ExtensionCommandContext). The old structural probe therefore always
+        // failed and this always degraded to implement-here. The sanctioned
+        // bridge is to dispatch a registered command, whose handler does have
+        // newSession — pi.sendUserMessage with expandPromptTemplates executes
+        // it, even mid-stream. The handoff is handed over in a module var
+        // rather than the command string so it survives verbatim.
+        pendingFreshHandoff = buildHandoffMessage(planFile, approach);
+        pi.sendUserMessage(FRESH_COMMAND, { expandPromptTemplates: true });
+        return {
+          content: [{ type: "text", text: "Approved. Starting a fresh session with the plan handoff." }],
+          details: { planFile, approach },
+        };
       }
 
       pi.sendUserMessage(buildImplementHereMessage(planFile, approach), { deliverAs: "followUp" });
@@ -429,6 +427,37 @@ export default function planMode(pi: ExtensionAPI) {
   });
 
   // ── Command & shortcut ───────────────────────────────────────────────
+
+  // Internal: the tool cannot call newSession, so it dispatches this command,
+  // which can. Not advertised in help; it only makes sense right after an
+  // APPROVE_FRESH decision.
+  pi.registerCommand("plan-approve-fresh", {
+    description: "(internal) start a fresh session with the approved plan handoff",
+    handler: async (_args, ctx) => {
+      const handoff = pendingFreshHandoff;
+      pendingFreshHandoff = null;
+      if (!handoff) return;
+      const cmdCtx = ctx as unknown as {
+        newSession?: (options: {
+          withSession: (fresh: { sendUserMessage: (m: string) => void | Promise<void> }) => Promise<void>;
+        }) => Promise<{ cancelled: boolean }>;
+      };
+      if (!cmdCtx.newSession) {
+        // Only reachable if pi drops newSession from command ctx; degrade the
+        // same way the tool used to, so approval is never simply lost.
+        pi.sendUserMessage(handoff, { deliverAs: "followUp" });
+        return;
+      }
+      const { cancelled } = await cmdCtx.newSession({
+        withSession: async (fresh) => {
+          await fresh.sendUserMessage(handoff);
+        },
+      });
+      if (cancelled) {
+        if (ctx.hasUI) ctx.ui.notify("Fresh session cancelled — the plan is still saved.", "info");
+      }
+    },
+  });
 
   pi.registerCommand("plan", {
     description: "Plan mode: /plan [off | list | open <file> | steps | export [file] | <first planning prompt>]",
