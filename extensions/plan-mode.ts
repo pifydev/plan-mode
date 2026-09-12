@@ -202,6 +202,7 @@ export default function planMode(pi: ExtensionAPI) {
   pi.registerTool({
     name: "enter_plan_mode",
     label: "Enter plan mode",
+    promptSnippet: "Start planning: research and propose before making any change",
     description:
       "Switch into read-only plan mode before a complex or risky implementation task. Explore with " +
       "read-only tools, write the plan with write_plan, then submit it with exit_plan_mode. " +
@@ -226,6 +227,7 @@ export default function planMode(pi: ExtensionAPI) {
   pi.registerTool({
     name: "write_plan",
     label: "Write plan",
+    promptSnippet: "Record the plan the user will approve or revise",
     description:
       "Write the implementation plan to a markdown file under .pi/plans/. Include the goal, concrete " +
       "steps, files to touch, verification strategy, and open risks. The created file becomes editable " +
@@ -250,6 +252,7 @@ export default function planMode(pi: ExtensionAPI) {
   pi.registerTool({
     name: "plan_step_done",
     label: "Plan step done",
+    promptSnippet: "Mark one plan step finished while executing",
     description:
       "Mark one step of the approved plan complete and get the next one. Call it as you finish each " +
       "step, with evidence of what you verified — not at the end for all steps at once. Only available " +
@@ -291,6 +294,7 @@ export default function planMode(pi: ExtensionAPI) {
   pi.registerTool({
     name: "exit_plan_mode",
     label: "Exit plan mode",
+    promptSnippet: "Leave planning and begin the approved work",
     description:
       "Submit the plan for user approval. Write the plan with write_plan first. Optionally offer 1-3 " +
       "alternative approaches (label + description; append '(Recommended)' to your recommended one; " +
