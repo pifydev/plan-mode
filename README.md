@@ -1,6 +1,6 @@
 # @pify/plan-mode
 
-[![npm version](https://img.shields.io/npm/v/@pify/plan-mode)](https://www.npmjs.com/package/@pify/plan-mode) [![npm downloads](https://img.shields.io/npm/dm/@pify/plan-mode)](https://www.npmjs.com/package/@pify/plan-mode)
+[![CI](https://github.com/pifydev/plan-mode/actions/workflows/ci.yml/badge.svg)](https://github.com/pifydev/plan-mode/actions/workflows/ci.yml) [![npm version](https://img.shields.io/npm/v/@pify/plan-mode)](https://www.npmjs.com/package/@pify/plan-mode) [![npm downloads](https://img.shields.io/npm/dm/@pify/plan-mode)](https://www.npmjs.com/package/@pify/plan-mode)
 
 Read-only planning mode for [pi](https://github.com/earendil-works/pi) with an explicit approve-then-execute gate — enforced at the tool level, not just prompted.
 
