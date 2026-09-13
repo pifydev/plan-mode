@@ -1,5 +1,7 @@
 # @pify/plan-mode
 
+[![npm version](https://img.shields.io/npm/v/@pify/plan-mode)](https://www.npmjs.com/package/@pify/plan-mode) [![npm downloads](https://img.shields.io/npm/dm/@pify/plan-mode)](https://www.npmjs.com/package/@pify/plan-mode)
+
 Read-only planning mode for [pi](https://github.com/earendil-works/pi) with an explicit approve-then-execute gate — enforced at the tool level, not just prompted.
 
 Part of the [Pify suite](https://github.com/pifydev). Install with [`pify install plan-mode`](https://github.com/pifydev/cli) or `pi install npm:@pify/plan-mode`.
