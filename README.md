@@ -22,6 +22,8 @@ While planning, the `tool_call` hook stands in front of everything:
 
 - **`edit` and `write` are blocked** — except on the current plan file, so the plan itself stays editable.
 - **`bash` runs through a three-tier classifier.** Known read-only commands run. Known mutators — `rm`, `mv`, `npm install`, `git commit`, output redirects and the rest — are blocked. Anything unrecognised asks you once.
+  - Interpreters (`node`, `python`, `python3`, `bun`, `deno`) run only for `--version`/`--help` style queries. Anything else — a script path, `bun install`, `deno run`, `-e`/`-c` inline code, `python -m pip` — asks first, because it runs code the classifier cannot see into.
+  - `env` is unwrapped: `env rm -rf x` is judged as `rm -rf x` and blocked, `env FOO=1 cat file` runs, bare `env` and `printenv` run. `env -S` (and any other option that could build a command line) asks first.
 - **Unknown custom tools need a one-time confirmation.** Read-only tools from this suite (`memory_read`, `goal_status`, …) pass without asking.
 
 ## Plans are files

@@ -110,6 +110,45 @@ function stripEnvPrefix(segment: string): string {
   return segment.replace(/^(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)+/, "");
 }
 
+/** A shell-style VAR=value token (same shape stripEnvPrefix accepts). */
+const ENV_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
+/** env options that take no argument and cannot change what gets executed. */
+const ENV_BARE_FLAGS = /^(?:-i|--ignore-environment|-0|--null)$/;
+/** env options whose argument is the next token (`-u NAME`, `-C DIR`). */
+const ENV_VALUE_FLAGS = /^(?:-u|--unset|-C|--chdir)$/;
+/** Same options in `--opt=value` form. */
+const ENV_INLINE_VALUE_FLAGS = /^--(?:unset|chdir)=/;
+
+/**
+ * `env [opts] [VAR=value...] cmd args` is just `cmd args` with a different
+ * environment, so the wrapped command must be the one judged — otherwise
+ * `env rm -rf x` rides in on env's own safe-list entry. Returns the wrapped
+ * command line, "" when env would only print the environment, or null when
+ * an option we cannot see through is present: -S/--split-string turns a
+ * quoted string into a whole command line, and anything else unknown gets
+ * the same fail-safe treatment.
+ */
+function unwrapEnv(segment: string): string | null {
+  const tokens = stripEnvPrefix(segment).split(/\s+/).slice(1).filter(Boolean);
+  let i = 0;
+  while (i < tokens.length) {
+    const token = tokens[i]!;
+    if (token === "--") { i++; break; }
+    if (ENV_ASSIGNMENT.test(token) || ENV_BARE_FLAGS.test(token) || ENV_INLINE_VALUE_FLAGS.test(token)) { i++; continue; }
+    if (ENV_VALUE_FLAGS.test(token)) { i += 2; continue; }
+    if (token.startsWith("-")) return null;
+    break;
+  }
+  return tokens.slice(i).join(" ");
+}
+
+/** Interpreters worth allowing for version/help queries but never for code. */
+const INTERPRETERS = new Set(["node", "python", "python3", "bun", "deno"]);
+/** The only interpreter arguments that cannot execute anything. */
+const INTERPRETER_QUERY_FLAGS = /^(?:--version|-v|-V|-version|--help|-h)$/;
+/** fd merges like `2>&1`; hasWritingRedirect already judged them harmless. */
+const FD_MERGE = /^[0-9]?>&[0-9]$/;
+
 function leadingCommand(segment: string): string {
   const first = stripEnvPrefix(segment).split(/\s+/)[0] ?? "";
   return first.replace(/^["']|["']$/g, "").split(/[\\/]/).pop()?.toLowerCase() ?? "";
@@ -124,6 +163,74 @@ export function hasWritingRedirect(command: string): boolean {
   return />/.test(cleaned);
 }
 
+/** Verdict for one operator-free segment; the strictest segment wins overall. */
+function classifySegment(segment: string): PolicyVerdict {
+  const cmd = leadingCommand(segment);
+  if (cmd === "git") {
+    const rest = stripEnvPrefix(segment).replace(/^\S+\s*/, "").trim();
+    const gitTokens = rest.split(/\s+/).filter(Boolean);
+    const sub = gitTokens[0] ?? "";
+    if (MUTATOR_GIT_SUBCOMMANDS.some((m) => rest.startsWith(m))) {
+      return { kind: "block", reason: `git ${sub} mutates the repository` };
+    }
+    if (hasSubstitution(segment)) {
+      return { kind: "confirm", reason: "command substitution runs code" };
+    }
+    // branch/tag/remote read like list commands but also create/delete refs.
+    if (sub === "branch" || sub === "tag" || sub === "remote") {
+      if (gitRefVerdict(sub, gitTokens.slice(1)) === "confirm") {
+        return { kind: "confirm", reason: `git ${sub} with this form can modify refs` };
+      }
+      return { kind: "allow" };
+    }
+    const safe = [...SAFE_GIT_SUBCOMMANDS].some((s) => rest.startsWith(s));
+    if (!safe) return { kind: "confirm", reason: `unrecognized git subcommand: ${sub}` };
+    return { kind: "allow" };
+  }
+  if (cmd === "env") {
+    const inner = unwrapEnv(segment);
+    if (inner === null) {
+      return { kind: "confirm", reason: "env option can build an arbitrary command line" };
+    }
+    if (inner) {
+      const verdict = classifySegment(inner);
+      // Substitution in env's own arguments (`env FOO=$(rm x) cat f`) runs
+      // code the wrapped command never sees, so it cannot inherit its allow.
+      if (verdict.kind === "allow" && hasSubstitution(segment)) {
+        return { kind: "confirm", reason: "command substitution runs code" };
+      }
+      return verdict;
+    }
+    // Bare `env` only prints the environment: fall through to the safe list.
+  }
+  if (MUTATOR_COMMANDS.has(cmd)) {
+    return { kind: "block", reason: `'${cmd}' modifies the system` };
+  }
+  if (hasSubstitution(segment)) {
+    return { kind: "confirm", reason: "command substitution runs code" };
+  }
+  if (!SAFE_COMMANDS.has(cmd)) {
+    return { kind: "confirm", reason: `unrecognized command: '${cmd}'` };
+  }
+  // Interpreters are only on the safe list for `--version`/`--help` style
+  // queries. Anything else — a script path, `bun install`, `deno run`,
+  // `-e`/`-c` inline code, `-mpip` — runs code that can write files or
+  // install packages, and a REPL with no arguments is never a read-only
+  // inspection either. Blocklisting flags lost that race (`-mpip` had no
+  // word boundary), so the harmless set is enumerated instead.
+  if (INTERPRETERS.has(cmd)) {
+    const args = stripEnvPrefix(segment).split(/\s+/).slice(1).filter((t) => t && !FD_MERGE.test(t));
+    if (args.length === 0 || !args.every((t) => INTERPRETER_QUERY_FLAGS.test(t))) {
+      return { kind: "confirm", reason: `running ${cmd} code can modify files` };
+    }
+  }
+  // `find` can mutate via -delete or -exec/-execdir despite being read-only.
+  if (cmd === "find" && /\s-(delete|exec|execdir)\b/.test(segment)) {
+    return { kind: "confirm", reason: "find -delete/-exec can modify files" };
+  }
+  return { kind: "allow" };
+}
+
 export function classifyShellCommand(command: string): PolicyVerdict {
   const trimmed = command.trim();
   if (!trimmed) return { kind: "allow" };
@@ -133,46 +240,8 @@ export function classifyShellCommand(command: string): PolicyVerdict {
   }
 
   for (const segment of splitSegments(trimmed)) {
-    const cmd = leadingCommand(segment);
-    if (cmd === "git") {
-      const rest = stripEnvPrefix(segment).replace(/^\S+\s*/, "").trim();
-      const gitTokens = rest.split(/\s+/).filter(Boolean);
-      const sub = gitTokens[0] ?? "";
-      if (MUTATOR_GIT_SUBCOMMANDS.some((m) => rest.startsWith(m))) {
-        return { kind: "block", reason: `git ${sub} mutates the repository` };
-      }
-      if (hasSubstitution(segment)) {
-        return { kind: "confirm", reason: "command substitution runs code" };
-      }
-      // branch/tag/remote read like list commands but also create/delete refs.
-      if (sub === "branch" || sub === "tag" || sub === "remote") {
-        if (gitRefVerdict(sub, gitTokens.slice(1)) === "confirm") {
-          return { kind: "confirm", reason: `git ${sub} with this form can modify refs` };
-        }
-        continue;
-      }
-      const safe = [...SAFE_GIT_SUBCOMMANDS].some((s) => rest.startsWith(s));
-      if (!safe) return { kind: "confirm", reason: `unrecognized git subcommand: ${sub}` };
-      continue;
-    }
-    if (MUTATOR_COMMANDS.has(cmd)) {
-      return { kind: "block", reason: `'${cmd}' modifies the system` };
-    }
-    if (hasSubstitution(segment)) {
-      return { kind: "confirm", reason: "command substitution runs code" };
-    }
-    if (!SAFE_COMMANDS.has(cmd)) {
-      return { kind: "confirm", reason: `unrecognized command: '${cmd}'` };
-    }
-    // Safe interpreters running inline code (-e/-c/-p/-m/--eval) can still
-    // write files or install packages (e.g. `python -m pip install`).
-    if (["node", "python", "python3", "bun", "deno"].includes(cmd) && /\s-(e|c|p|m|-eval)\b/.test(segment)) {
-      return { kind: "confirm", reason: `inline ${cmd} code can modify files` };
-    }
-    // `find` can mutate via -delete or -exec/-execdir despite being read-only.
-    if (cmd === "find" && /\s-(delete|exec|execdir)\b/.test(segment)) {
-      return { kind: "confirm", reason: "find -delete/-exec can modify files" };
-    }
+    const verdict = classifySegment(segment);
+    if (verdict.kind !== "allow") return verdict;
   }
   return { kind: "allow" };
 }

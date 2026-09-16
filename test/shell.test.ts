@@ -134,3 +134,64 @@ test("interpreter -m module invocations need confirmation", () => {
   // -m only flags the safe interpreters; a bare version check still allows.
   assert.deepEqual(classifyShellCommand("python --version"), { kind: "allow" });
 });
+
+test("`env` is unwrapped so it cannot launder a mutator", () => {
+  // env <cmd> is just <cmd>: the wrapped command decides the verdict.
+  assert.equal(classifyShellCommand("env rm -rf x").kind, "block");
+  assert.equal(classifyShellCommand("env git push origin main").kind, "block");
+  assert.equal(classifyShellCommand("env -i FOO=1 rm -rf x").kind, "block");
+  assert.equal(classifyShellCommand("env -u HOME --unset=PATH -C /tmp rm -rf x").kind, "block");
+  assert.equal(classifyShellCommand("env -- rm -rf x").kind, "block");
+  assert.equal(classifyShellCommand("env terraform plan").kind, "confirm");
+  // Bare env (and printenv) only print the environment.
+  assert.deepEqual(classifyShellCommand("env"), { kind: "allow" });
+  assert.deepEqual(classifyShellCommand("env -i"), { kind: "allow" });
+  assert.deepEqual(classifyShellCommand("printenv"), { kind: "allow" });
+  assert.deepEqual(classifyShellCommand("env FOO=1 cat file"), { kind: "allow" });
+  assert.deepEqual(classifyShellCommand("env -0 FOO=1 git status"), { kind: "allow" });
+  // -S turns a quoted string into a command line we cannot see through.
+  assert.equal(classifyShellCommand("env -S 'rm -rf x'").kind, "confirm");
+  assert.equal(classifyShellCommand("env --split-string='rm -rf x'").kind, "confirm");
+  // Any other env option is opaque: fail safe.
+  assert.equal(classifyShellCommand("env --block-signal rm -rf x").kind, "confirm");
+  // Substitution inside env's own arguments cannot inherit the inner allow.
+  assert.equal(classifyShellCommand("env FOO=$(rm -rf x) cat f").kind, "confirm");
+  assert.equal(classifyShellCommand("env FOO=$(rm -rf x)").kind, "confirm");
+  // Wrapping a mutator with substitution stays blocked (stricter wins), as bare does.
+  assert.equal(classifyShellCommand("env rm $(echo x)").kind, "block");
+});
+
+test("interpreters allow only version/help; anything else confirms", () => {
+  for (const cmd of [
+    "bun install",
+    "bun add left-pad",
+    "bun run build",
+    "bun x cowsay",
+    "deno run -A x.ts",
+    "deno run --allow-write x.ts",
+    "deno eval 'Deno.writeTextFileSync(1)'",
+    "node x.js",
+    "node scripts/migrate.js",
+    "python setup.py install",
+    "python manage.py migrate",
+    "python -mpip install x",
+    "python -c 'x'",
+    "python3",
+    "node",
+  ]) {
+    assert.equal(classifyShellCommand(cmd).kind, "confirm", cmd);
+  }
+  for (const cmd of [
+    "bun --version",
+    "node --version 2>&1",
+    "node --version 1>&2",
+    "python -V",
+    "python3 -v",
+    "node -h",
+    "deno --help",
+    "node -version",
+    "NODE_OPTIONS=x node --version",
+  ]) {
+    assert.deepEqual(classifyShellCommand(cmd), { kind: "allow" }, cmd);
+  }
+});
