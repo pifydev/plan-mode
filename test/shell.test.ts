@@ -52,6 +52,46 @@ test("writing redirects are blocked; /dev/null and fd merges are fine", () => {
   assert.ok(!hasWritingRedirect("x > /dev/null"));
 });
 
+test("quoted '>' is a search pattern, not a redirect (f083)", () => {
+  // Arrow/comparison patterns in quoted grep/rg arguments must read, not block.
+  assert.deepEqual(classifyShellCommand('grep -rn "=>" src'), { kind: "allow" });
+  assert.deepEqual(classifyShellCommand("rg '->' src"), { kind: "allow" });
+  assert.deepEqual(classifyShellCommand('rg "->"'), { kind: "allow" });
+  assert.deepEqual(classifyShellCommand('grep -rn ">=" .'), { kind: "allow" });
+  assert.deepEqual(classifyShellCommand("git log --format=\"%h > %s\""), { kind: "allow" });
+  assert.deepEqual(classifyShellCommand("ls 2>/dev/null"), { kind: "allow" });
+  // A real redirect outside quotes still blocks, even next to a quoted arg.
+  assert.equal(classifyShellCommand('echo x > "file"').kind, "block");
+  assert.equal(classifyShellCommand('echo x >"file"').kind, "block");
+  // An escaped quote does NOT open a span, so the unquoted '>' is a redirect.
+  assert.equal(classifyShellCommand('echo \\"a\\" > f "x"').kind, "block");
+  // Unbalanced quotes fail safe (conservative block).
+  assert.equal(classifyShellCommand("echo 'unterminated > f").kind, "block");
+  assert.equal(classifyShellCommand('grep "unbalanced > x').kind, "block");
+  // hasWritingRedirect directly
+  assert.ok(!hasWritingRedirect('grep "=>" src'));
+  assert.ok(hasWritingRedirect('echo x > "f"'));
+  assert.ok(hasWritingRedirect("echo 'open"));
+});
+
+test("safe-list commands with write-mode flags need confirmation (f084)", () => {
+  assert.equal(classifyShellCommand("sort -o package.json package.json").kind, "confirm");
+  assert.equal(classifyShellCommand("sort --output out in").kind, "confirm");
+  assert.equal(classifyShellCommand("yq -i '.version = 2' config.yaml").kind, "confirm");
+  assert.equal(classifyShellCommand("yq --inplace '.a=1' f.yaml").kind, "confirm");
+  assert.equal(classifyShellCommand("uniq in out").kind, "confirm");
+  assert.equal(classifyShellCommand("find . -fprint out").kind, "confirm");
+  assert.equal(classifyShellCommand("find . -fprintf out '%p'").kind, "confirm");
+  assert.equal(classifyShellCommand("find . -fls out").kind, "confirm");
+  assert.equal(classifyShellCommand("find . -ok rm {} ;").kind, "confirm");
+  assert.equal(classifyShellCommand("find . -okdir rm {} ;").kind, "confirm");
+  // Read-only forms of the same commands still run automatically.
+  assert.deepEqual(classifyShellCommand("sort file.txt"), { kind: "allow" });
+  assert.deepEqual(classifyShellCommand("uniq file.txt"), { kind: "allow" });
+  assert.deepEqual(classifyShellCommand("uniq -c -f 1 file.txt"), { kind: "allow" });
+  assert.deepEqual(classifyShellCommand("yq '.version' config.yaml"), { kind: "allow" });
+});
+
 test("unknown commands and unknown git subcommands need confirmation", () => {
   assert.equal(classifyShellCommand("terraform plan").kind, "confirm");
   assert.equal(classifyShellCommand("make build").kind, "confirm");
@@ -192,6 +232,25 @@ test("interpreters allow only version/help; anything else confirms", () => {
     "node -version",
     "NODE_OPTIONS=x node --version",
   ]) {
+    assert.deepEqual(classifyShellCommand(cmd), { kind: "allow" }, cmd);
+  }
+});
+
+test("write-mode flags are caught attached or bundled, not only standing alone (f084 review)", () => {
+  // `-oout.txt`, `-no out`, `-rno out`, `-iP`, `-Pi` all write; a \b-anchored
+  // `-o`/`-i` match saw none of them.
+  for (const cmd of [
+    "sort -oout.txt in.txt",
+    "sort -no out.txt in.txt",
+    "sort -rno out in",
+    "sort --output=out in",
+    "yq -iP '.a=1' f.yaml",
+    "yq -Pi '.a=1' f.yaml",
+  ]) {
+    assert.equal(classifyShellCommand(cmd).kind, "confirm", cmd);
+  }
+  // Reading forms stay allowed, and `--` ends option parsing.
+  for (const cmd of ["sort -rn in.txt", "sort -- -o", "yq -P '.a' f.yaml", "yq -r .a f.yaml"]) {
     assert.deepEqual(classifyShellCommand(cmd), { kind: "allow" }, cmd);
   }
 });

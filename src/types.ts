@@ -27,7 +27,10 @@ export const INITIAL_STATE: PlanState = {
 /** Verdict for one tool call while plan mode is active. */
 export type PolicyVerdict =
   | { kind: "allow" }
-  | { kind: "confirm"; reason: string }
+  // `perCall` confirms are never remembered by tool name — every call asks
+  // again, the way bash does. Delegation tools (agent_run/swarm_run) set it so
+  // one approved scout run cannot silently green-light a later worker run.
+  | { kind: "confirm"; reason: string; perCall?: boolean }
   | { kind: "block"; reason: string };
 
 /** Thinking level plan mode switches to (planning earns deeper thought). */

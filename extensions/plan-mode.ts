@@ -170,8 +170,9 @@ export default function planMode(pi: ExtensionAPI) {
         `Allow this while planning?\n${verdict.reason}`,
       ));
       if (ok) {
-        // Bash confirmations are per-command; custom tools are remembered.
-        if (event.toolName !== "bash") approvedTools.add(event.toolName);
+        // Bash and per-call verdicts (agent_run/swarm_run delegation) confirm
+        // every time; other custom tools are remembered for the session.
+        if (event.toolName !== "bash" && !verdict.perCall) approvedTools.add(event.toolName);
         return undefined;
       }
       return { block: true, reason: `Plan mode: the user declined (${verdict.reason}).` };
@@ -185,7 +186,12 @@ export default function planMode(pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     state = replayBranch(ctx.sessionManager.getBranch() as never);
     approvedTools.clear();
-    if (!state.active && pi.getFlag("plan") === true) {
+    // --plan only auto-enters for a genuinely new session. The flag stays true
+    // for the whole process, so on reload/resume/fork we must trust the
+    // replayed snapshot instead — re-entering would wipe an approved plan's
+    // tracked steps and re-block edits.
+    const reason = (_event as { reason?: string }).reason;
+    if (!state.active && pi.getFlag("plan") === true && (reason === "startup" || reason === "new")) {
       enterPlanMode(ctx);
       return;
     }
@@ -558,7 +564,12 @@ export default function planMode(pi: ExtensionAPI) {
       }
       enterPlanMode(ctx);
       if (text) {
-        pi.sendUserMessage(text);
+        // pi runs extension commands mid-turn, so the agent may be streaming
+        // when /plan <prompt> is typed. sendUserMessage with no deliverAs
+        // throws "Agent is already processing" and the prompt is lost;
+        // followUp queues it after the current turn (and is a no-op override
+        // when idle).
+        pi.sendUserMessage(text, { deliverAs: "followUp" });
       }
     },
   });

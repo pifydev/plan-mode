@@ -154,9 +154,43 @@ function leadingCommand(segment: string): string {
   return first.replace(/^["']|["']$/g, "").split(/[\\/]/).pop()?.toLowerCase() ?? "";
 }
 
+/**
+ * Return `command` with every quoted span removed, or null when a quote is
+ * left open. A `>` only redirects when it is unquoted, so quoted search
+ * patterns (`grep "=>" src`, `rg '->'`, `git log --format="%h > %s"`) must not
+ * be mistaken for redirects. A regex over quote spans is unsafe — bash treats
+ * `\"` OUTSIDE quotes as a literal, so a regex would start a span at an escaped
+ * quote and let `echo \"a\" > f "x"` slip through — hence a left-to-right
+ * scanner: outside quotes a backslash escapes (skips) the next char, `'` opens
+ * a single-quoted span (no escapes inside), `"` opens a double-quoted span
+ * (backslash escapes inside). Unbalanced quotes return null so the caller can
+ * fail safe.
+ */
+function stripQuotedSpans(command: string): string | null {
+  let state: "none" | "single" | "double" = "none";
+  let out = "";
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i]!;
+    if (state === "none") {
+      if (ch === "\\") { i++; continue; } // escaped literal: never a redirect
+      if (ch === "'") { state = "single"; continue; }
+      if (ch === '"') { state = "double"; continue; }
+      out += ch;
+    } else if (state === "single") {
+      if (ch === "'") state = "none"; // no escapes inside single quotes
+    } else {
+      if (ch === "\\") { i++; continue; } // backslash escapes inside double quotes
+      if (ch === '"') state = "none";
+    }
+  }
+  return state === "none" ? out : null;
+}
+
 /** Redirects can write files; only /dev/null and stderr merges are harmless. */
 export function hasWritingRedirect(command: string): boolean {
-  const cleaned = command
+  const unquoted = stripQuotedSpans(command);
+  if (unquoted === null) return true; // unbalanced quotes: fail safe, block
+  const cleaned = unquoted
     .replace(/2>&1/g, "")
     .replace(/[0-9]?>>?\s*\/dev\/null/g, "")
     .replace(/[0-9]?>\s*&[0-9]/g, "");
@@ -224,11 +258,55 @@ function classifySegment(segment: string): PolicyVerdict {
       return { kind: "confirm", reason: `running ${cmd} code can modify files` };
     }
   }
-  // `find` can mutate via -delete or -exec/-execdir despite being read-only.
-  if (cmd === "find" && /\s-(delete|exec|execdir)\b/.test(segment)) {
-    return { kind: "confirm", reason: "find -delete/-exec can modify files" };
+  // `find` can mutate via -delete/-exec/-execdir or write files via
+  // -fprint/-fprintf/-fls and run commands via -ok/-okdir despite being on the
+  // safe list.
+  if (cmd === "find" && /\s-(delete|exec|execdir|ok|okdir|fprint|fprintf|fls)\b/.test(segment)) {
+    return { kind: "confirm", reason: "find -delete/-exec/-fprint can modify files" };
+  }
+  // Other safe-list commands with write modes hidden behind flags rather than a
+  // `>` redirect: `sort -o OUT`, `yq -i` (in-place), and `uniq IN OUT` (the
+  // second positional is the output file). A short flag can be attached to its
+  // value (`-oout.txt`) or bundled with others (`-rno out`, `-iP`), so the
+  // check is per token: any short-flag cluster containing the letter, or the
+  // long form, not just the flag standing alone.
+  if (cmd === "sort" && hasShortOrLongFlag(segment, "o", "--output")) {
+    return { kind: "confirm", reason: "sort -o writes an output file" };
+  }
+  if (cmd === "yq" && hasShortOrLongFlag(segment, "i", "--inplace")) {
+    return { kind: "confirm", reason: "yq -i edits the file in place" };
+  }
+  if (cmd === "uniq") {
+    const uniqTokens = stripEnvPrefix(segment).split(/\s+/).slice(1).filter(Boolean);
+    let positionals = 0;
+    for (let i = 0; i < uniqTokens.length; i++) {
+      const t = uniqTokens[i]!;
+      // -f/-s/-w (and long forms) take the next token as their value.
+      if (/^(?:-f|-s|-w|--skip-fields|--skip-chars|--check-chars)$/.test(t)) { i++; continue; }
+      if (t.startsWith("-")) continue;
+      positionals++;
+    }
+    if (positionals >= 2) {
+      return { kind: "confirm", reason: "uniq with an output file writes it" };
+    }
   }
   return { kind: "allow" };
+}
+
+/**
+ * Does the segment carry short flag `letter` — alone (`-o`), attached to its
+ * value (`-oout`), or bundled (`-rno`) — or the `long` form (`--output`,
+ * `--output=x`)? A `--` ends option parsing; tokens after it are operands.
+ */
+function hasShortOrLongFlag(segment: string, letter: string, long: string): boolean {
+  const tokens = stripEnvPrefix(segment).split(/\s+/).slice(1).filter(Boolean);
+  for (const token of tokens) {
+    if (token === "--") return false;
+    if (token === long || token.startsWith(`${long}=`)) return true;
+    if (token.startsWith("--")) continue;
+    if (token.startsWith("-") && token.length > 1 && token.slice(1).includes(letter)) return true;
+  }
+  return false;
 }
 
 export function classifyShellCommand(command: string): PolicyVerdict {
