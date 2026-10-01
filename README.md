@@ -32,6 +32,8 @@ While planning, the `tool_call` hook stands in front of everything:
   - `swarm_run` inspects the top-level agent *and* every item's own agent; it asks only when all of them are read-only. Any other name, an item with no agent and no read-only default (routing may pick a worker), or `isolation` set is **blocked**.
   - `workflow` is **always blocked** in plan mode — a workflow script can spawn any agent, so it is never provably read-only (resuming with `resumeFromRunId` does not change that).
 
+A git read is matched by subcommand token, not by prefix: `git difftool --extcmd=<cmd>` is not `git diff`, and `git stashing` is not `git stash list`. The read-only subcommands confirm instead of auto-running when a flag would execute an external program: `--ext-diff`, `--textconv`, `--extcmd`/`-x`, `--tool`, `--output`, `--exec-path`, `--upload-pack`, `--paginate`, or a `--format`/`--pretty` containing `%G` (signature checks run gpg). Plan mode's premise is no code execution during planning; a read command that can be configured to run one is a question, not a pass.
+
 ## Plans are files
 
 `write_plan` creates `.pi/plans/YYYY-MM-DD-<slug>.md`. It is reviewable while you plan, editable by hand, and committable — a plan that only exists in a conversation is a plan you cannot review tomorrow.

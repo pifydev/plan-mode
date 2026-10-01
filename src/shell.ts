@@ -197,6 +197,45 @@ export function hasWritingRedirect(command: string): boolean {
   return />/.test(cleaned);
 }
 
+/** Does the git argv start with this subcommand phrase, token for token? ("stash list" ≠ "stashing", "diff" ≠ "difftool") */
+function startsWithPhrase(tokens: string[], phrase: string): boolean {
+  const words = phrase.split(/\s+/);
+  return words.every((w, i) => tokens[i] === w);
+}
+
+/**
+ * Flags under which a read-only git command runs an external program: a
+ * diff/textconv driver, an external diff tool, a pager, a custom exec path,
+ * or a GPG signature check in a format string. Plan mode's premise is no
+ * code execution during planning, so these confirm instead of auto-running.
+ */
+const GIT_HELPER_FLAGS = [
+  /^--ext-diff$/,
+  /^--textconv$/,
+  /^--extcmd(=|$)/,
+  /^-x$/,
+  /^--tool(=|$)/,
+  /^-t$/,
+  /^--output(=|$)/,
+  /^--exec-path(=|$)/,
+  /^--upload-pack(=|$)/,
+  /^--receive-pack(=|$)/,
+  /^--open-files-in-pager/,
+  /^--paginate$/,
+  /^-O$/,
+];
+function gitHelperFlag(tokens: string[]): string | null {
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i]!;
+    if (GIT_HELPER_FLAGS.some((re) => re.test(t))) return t;
+    // --format=... / --pretty=... / --format ... with %G runs gpg on every commit.
+    // The value may be quoted and split across tokens by the whitespace
+    // tokenizer, so look at everything that follows the flag.
+    if (/^--(?:format|pretty)(?:=|$)/.test(t) && tokens.slice(i).join(" ").includes("%G")) return t;
+  }
+  return null;
+}
+
 /** Verdict for one operator-free segment; the strictest segment wins overall. */
 function classifySegment(segment: string): PolicyVerdict {
   const cmd = leadingCommand(segment);
@@ -204,7 +243,7 @@ function classifySegment(segment: string): PolicyVerdict {
     const rest = stripEnvPrefix(segment).replace(/^\S+\s*/, "").trim();
     const gitTokens = rest.split(/\s+/).filter(Boolean);
     const sub = gitTokens[0] ?? "";
-    if (MUTATOR_GIT_SUBCOMMANDS.some((m) => rest.startsWith(m))) {
+    if (MUTATOR_GIT_SUBCOMMANDS.some((m) => startsWithPhrase(gitTokens, m))) {
       return { kind: "block", reason: `git ${sub} mutates the repository` };
     }
     if (hasSubstitution(segment)) {
@@ -217,8 +256,11 @@ function classifySegment(segment: string): PolicyVerdict {
       }
       return { kind: "allow" };
     }
-    const safe = [...SAFE_GIT_SUBCOMMANDS].some((s) => rest.startsWith(s));
+    // Token match, not prefix: `git difftool --extcmd=<cmd>` is not `git diff`.
+    const safe = [...SAFE_GIT_SUBCOMMANDS].some((s) => startsWithPhrase(gitTokens, s));
     if (!safe) return { kind: "confirm", reason: `unrecognized git subcommand: ${sub}` };
+    const helper = gitHelperFlag(gitTokens.slice(1));
+    if (helper) return { kind: "confirm", reason: `git ${sub} ${helper} runs an external program` };
     return { kind: "allow" };
   }
   if (cmd === "env") {

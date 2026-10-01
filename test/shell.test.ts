@@ -254,3 +254,30 @@ test("write-mode flags are caught attached or bundled, not only standing alone (
     assert.deepEqual(classifyShellCommand(cmd), { kind: "allow" }, cmd);
   }
 });
+
+test("git lookalikes do not ride on a read-only prefix: difftool is not diff, stashing is not stash list", () => {
+  assert.equal(classifyShellCommand("git difftool --no-prompt --extcmd=rm -rf . HEAD~1").kind, "confirm");
+  assert.equal(classifyShellCommand("git difftool -y -x 'sh -c id' HEAD").kind, "confirm");
+  assert.equal(classifyShellCommand("git stashing").kind, "confirm");
+  assert.equal(classifyShellCommand("git stash list").kind, "allow");
+  assert.equal(classifyShellCommand("git diff HEAD~1").kind, "allow");
+  assert.equal(classifyShellCommand("git log -p -3").kind, "allow", "-p is a patch, not a pager");
+});
+
+test("read-only git commands confirm when a flag would run an external program", () => {
+  for (const cmd of [
+    "git diff --ext-diff",
+    "git diff --textconv HEAD~1",
+    "git show --textconv HEAD:a.bin",
+    "git log --format='%H %G?' -3",
+    "git log --pretty=format:%GS",
+    "git log --exec-path=/tmp/x",
+    "git diff --output=/tmp/out.patch",
+    "git log --paginate",
+  ]) {
+    const v = classifyShellCommand(cmd);
+    assert.equal(v.kind, "confirm", cmd);
+    assert.match((v as { reason: string }).reason, /external program/, cmd);
+  }
+  assert.equal(classifyShellCommand("git log --format='%h %s' -3").kind, "allow", "a format without %G is just text");
+});
