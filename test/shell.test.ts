@@ -19,6 +19,26 @@ test("safe read-only commands run automatically", () => {
   }
 });
 
+test("git environment that runs a program or injects config confirms; harmless env does not", () => {
+  for (const cmd of [
+    "GIT_EXTERNAL_DIFF=./steal.sh git diff",
+    "GIT_SSH_COMMAND='sh -c evil' git ls-remote origin",
+    "GIT_EXEC_PATH=/tmp/fake git status",
+    "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=diff.external GIT_CONFIG_VALUE_0=./x git diff",
+    "GIT_CONFIG_PARAMETERS=\"'core.sshCommand=evil'\" git ls-remote",
+    "env GIT_ASKPASS=/tmp/x git ls-remote origin",
+    "env -i GIT_PROXY_COMMAND=/tmp/x git ls-remote origin",
+  ]) {
+    assert.equal(classifyShellCommand(cmd).kind, "confirm", cmd);
+  }
+  for (const cmd of ["GIT_PAGER=cat git log -3", "LC_ALL=C git status", "env GIT_TRACE=1 git status", "GIT_EXTERNAL_DIFF=x cat file"]) {
+    assert.equal(classifyShellCommand(cmd).kind, "allow", cmd);
+  }
+  // A global option before the subcommand is not a subcommand: it confirms.
+  assert.equal(classifyShellCommand("git -c diff.external=./x diff").kind, "confirm");
+  assert.equal(classifyShellCommand("git --exec-path=/tmp/fake log").kind, "confirm");
+});
+
 test("mutators are blocked outright", () => {
   for (const cmd of [
     "rm -rf node_modules",

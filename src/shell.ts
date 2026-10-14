@@ -236,8 +236,45 @@ function gitHelperFlag(tokens: string[]): string | null {
   return null;
 }
 
+/**
+ * Environment variables under which a read-only git command runs a program
+ * or reads configuration the classifier cannot see: GIT_CONFIG_* carries any
+ * config key (diff.external, core.sshCommand, core.hooksPath, …),
+ * GIT_EXTERNAL_DIFF and GIT_SSH/GIT_SSH_COMMAND name a program outright,
+ * GIT_EXEC_PATH swaps the git subcommand binaries, GIT_ASKPASS and
+ * GIT_PROXY_COMMAND run one on demand. stripEnvPrefix used to drop these
+ * before the subcommand was judged, so `GIT_EXTERNAL_DIFF=./x git diff` ran
+ * as a plain `git diff` (ECC's hook-bypass blocker covers the same routes).
+ */
+const GIT_ENV_HAZARD = /^(?:GIT_CONFIG_\w+|GIT_EXTERNAL_DIFF|GIT_SSH|GIT_SSH_COMMAND|GIT_EXEC_PATH|GIT_ASKPASS|GIT_PROXY_COMMAND)=/i;
+
+/** The hazardous variable assigned in front of a git invocation (bare prefix or `env`), or null. */
+function gitEnvHazard(segment: string): string | null {
+  const tokens = segment.trim().split(/\s+/).filter(Boolean);
+  const names: string[] = [];
+  let i = 0;
+  if (tokens[0] === "env") {
+    i = 1;
+    while (i < tokens.length) {
+      const token = tokens[i]!;
+      if (ENV_ASSIGNMENT.test(token)) names.push(token);
+      else if (ENV_VALUE_FLAGS.test(token)) { i++; }
+      else if (!token.startsWith("-")) break;
+      i++;
+    }
+  } else {
+    while (i < tokens.length && ENV_ASSIGNMENT.test(tokens[i]!)) names.push(tokens[i++]!);
+  }
+  const cmd = (tokens[i] ?? "").replace(/^["']|["']$/g, "").split(/[\\/]/).pop()?.toLowerCase();
+  if (cmd !== "git") return null;
+  const hit = names.find((name) => GIT_ENV_HAZARD.test(name));
+  return hit ? hit.slice(0, hit.indexOf("=")) : null;
+}
+
 /** Verdict for one operator-free segment; the strictest segment wins overall. */
 function classifySegment(segment: string): PolicyVerdict {
+  const hazard = gitEnvHazard(segment);
+  if (hazard) return { kind: "confirm", reason: `${hazard} makes git run a program or read other configuration` };
   const cmd = leadingCommand(segment);
   if (cmd === "git") {
     const rest = stripEnvPrefix(segment).replace(/^\S+\s*/, "").trim();
